@@ -23,7 +23,7 @@ import glob
 
 MAX_INPUT_DIM = 5000.0
 
-def overlay_bounding_boxes(raw_img, refined_bboxes, lw):
+def overlay_bounding_boxes(raw_img, refined_bboxes, lw, draw):
   """Overlay bounding boxes of face on images.
     Args:
       raw_img:
@@ -38,6 +38,7 @@ def overlay_bounding_boxes(raw_img, refined_bboxes, lw):
   """
 
   # Overlay bounding boxes on an image with the color based on the confidence.
+  bboxes = []
   for r in refined_bboxes:
     _score = expit(r[4])
     cm_idx = int(np.ceil(_score * 255))
@@ -49,10 +50,14 @@ def overlay_bounding_boxes(raw_img, refined_bboxes, lw):
       _lw = int(np.ceil(_lw * _score))
 
     _r = [int(x) for x in r[:4]]
-    cv2.rectangle(raw_img, (_r[0], _r[1]), (_r[2], _r[3]), rect_color, _lw)
+    if draw:
+        cv2.rectangle(raw_img, (_r[0], _r[1]), (_r[2], _r[3]), rect_color, _lw)
+    bboxes.append([_r[0], _r[1], _r[2], _r[3]])
+  return bboxes
+   
     
-    
-def evaluate(weight_file_path, data_dir, output_dir, prob_thresh=0.5, nms_thresh=0.1, lw=3, display=False):
+def evaluate(weight_file_path, data_dir, output_dir, prob_thresh=0.5, nms_thresh=0.1, lw=3, 
+             display=False, draw=True, save=True, print_=2):
   """Detect faces in images.
   Args:
     prob_thresh:
@@ -72,9 +77,11 @@ def evaluate(weight_file_path, data_dir, output_dir, prob_thresh=0.5, nms_thresh
     display:
         Display tiny face images on window.
   Returns:
-    None.
+    final bboxes
   """
-
+  # list of bounding boxes for the pictures
+  final_bboxes = []
+    
   # placeholder of input images. Currently batch size of one is supported.
   x = tf.placeholder(tf.float32, [1, None, None, 3]) # n, h, w, c
 
@@ -84,8 +91,11 @@ def evaluate(weight_file_path, data_dir, output_dir, prob_thresh=0.5, nms_thresh
 
   # Find image files in data_dir.
   filenames = []
-  for ext in ('*.png', '*.gif', '*.jpg', '*.jpeg'):
-    filenames.extend(glob.glob(os.path.join(data_dir, ext)))
+  if '.jpg' in data_dir:
+    filenames = [data_dir]
+  else:
+      for ext in ('*.png', '*.gif', '*.jpg', '*.jpeg'):
+        filenames.extend(glob.glob(os.path.join(data_dir, ext)))
 
   # Load an average image and clusters(reference boxes of templates).
   with open(weight_file_path, "rb") as f:
@@ -126,7 +136,8 @@ def evaluate(weight_file_path, data_dir, output_dir, prob_thresh=0.5, nms_thresh
 
       # process input at different scales
       for s in scales:
-        print("Processing {} at scale {:.4f}".format(fname, s))
+        if print_ == 2:
+            print("Processing {} at scale {:.4f}".format(fname, s))
         img = cv2.resize(raw_img_f, (0, 0), fx=s, fy=s, interpolation=cv2.INTER_LINEAR)
         img = img - average_image
         img = img[np.newaxis, :]
@@ -177,8 +188,8 @@ def evaluate(weight_file_path, data_dir, output_dir, prob_thresh=0.5, nms_thresh
         tmp_bboxes = _calc_bounding_boxes()
         bboxes = np.vstack((bboxes, tmp_bboxes)) # <class 'tuple'>: (5265, 5)
 
-
-      print("time {:.2f} secs for {}".format(time.time() - start, fname))
+      if print_ >= 1:
+          print("time {:.2f} secs for {}".format(time.time() - start, fname))
 
       # non maximum suppression
       # refind_idx = util.nms(bboxes, nms_thresh)
@@ -187,16 +198,19 @@ def evaluate(weight_file_path, data_dir, output_dir, prob_thresh=0.5, nms_thresh
                                                    max_output_size=bboxes.shape[0], iou_threshold=nms_thresh)
       refind_idx = sess.run(refind_idx)
       refined_bboxes = bboxes[refind_idx]
-      overlay_bounding_boxes(raw_img, refined_bboxes, lw)
+      f_box = overlay_bounding_boxes(raw_img, refined_bboxes, lw, draw)
 
       if display:
         # plt.axis('off')
         plt.imshow(raw_img)
         plt.show()
 
-      # save image with bounding boxes
-      raw_img = cv2.cvtColor(raw_img, cv2.COLOR_RGB2BGR)
-      cv2.imwrite(os.path.join(output_dir, fname), raw_img)
+      if save:
+        # save image with bounding boxes
+        raw_img = cv2.cvtColor(raw_img, cv2.COLOR_RGB2BGR)
+        cv2.imwrite(os.path.join(output_dir, fname), raw_img)
+      final_bboxes.append(f_box)
+  return final_bboxes
 
 def main():
 
@@ -223,5 +237,5 @@ def main():
       prob_thresh=args.prob_thresh, nms_thresh=args.nms_thresh,
       lw=args.line_width, display=args.display)
 
-if __name__ == '__main__':
-  main()
+#if __name__ == '__main__':
+#  main()
